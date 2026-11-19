@@ -187,6 +187,23 @@ foreshadow_extract:
     - '这(?:只是|仅仅是).{0,30}(?:开始|序章)'
   max_items: 8
 
+# ---------------- P1 闭环：事实契约自动生成 / 评审回流 ----------------
+# extract_facts：从正文抽硬数据生成候选契约，零 LLM。
+# 候选≠确认：must_not 覆盖有限且可能误报，必须人工/LLM 复核后才可当正式契约。
+fact_extract:
+  enabled: true
+  unit_pattern: '([0-9一二三四五六七八九十百千万两]+\.?[0-9]?)\s*(元|块|万|单|个|人|岁|天|月|年|公里|米|斤|%)'
+  label_chars: 8            # 取数字前 N 字做量名线索
+  min_occurrences: 2        # ≥2 次才标 high 置信度
+  max_anchors: 40
+
+# next_chapter_brief：把评审结论回流成下一章写作约束块，零 LLM。
+chapter_brief:
+  enabled: true
+  max_avoid: 8
+  max_foreshadow: 8
+  overdue_chapters: 8       # 伏笔埋设超过 N 章未收 → 超期提醒
+
 # ---------------- 评分与判定 ----------------
 rubric:
   dimensions:

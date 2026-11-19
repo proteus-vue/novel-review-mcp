@@ -91,7 +91,7 @@ python server.py               # stdio 模式，供写稿 Agent 挂载
 
 在客户端配置 stdio MCP server 时，command 指向 `python`，args 为 `[/绝对路径/src/server.py]`，cwd 设为 `src/`。Windows 下 command 用 `python.exe` 绝对路径，args 形如 `["C:\\...\\novel-review-mcp\\src\\server.py"]`；若已 `pip install .`，也可直接用 `xiezhi-review` 命令，无需 cwd。环境变量用 `set`（CMD）或 `$env:NAME = "值"`（PowerShell）设置。
 
-## MCP 工具（15 个）
+## MCP 工具（21 个）
 
 | 工具 | 作用 |
 |---|---|
@@ -107,8 +107,28 @@ python server.py               # stdio 模式，供写稿 Agent 挂载
 | `check_opening` | 黄金开篇：前 300 字主角/冲突/悬念 + 800 字金手指 |
 | `check_chapter_end` | 章末钩子判定与强度 |
 | `impact_plan` | 查看影响半径（零成本，不调 LLM） |
+| `extract_facts` | **P1 闭环**：从正文抽硬数据生成候选事实契约（`fact_check` 兼容），含跨章同单位多值 suspect；零 LLM，候选需复核 |
+| `foreshadow_register` / `foreshadow_close` | 伏笔台账登记（去重）/ 回收，持久化落盘 |
+| `foreshadow_list` / `foreshadow_overdue` | 查看台账 / 超期未收提醒（无章序不臆断） |
+| `next_chapter_brief` | **评审回流**：把上轮评审结论 + 未收伏笔 + 人设锚转成下一章写作约束块，含可直接喂写稿 Agent 的 `prompt` |
 | `cache_stats` / `cache_clear` | 缓存命中统计 / 清空 |
 | `list_profiles` | 列出平台档案、规则版本、提示词维度 |
+
+## AI 写小说闭环（P1）
+
+评审不该只是事后体检，而要在写下一章前变成护栏。推荐这样串：
+
+```
+写完 N 章 → review_batch（三审+红队+对标）→ 评审报告
+         → extract_facts(N章) 得候选契约（人工/LLM 复核后固化）
+         → foreshadow_register/close 维护伏笔台账
+         → next_chapter_brief(报告, 契约, 人设) 得第 N+1 章约束块
+         → 把约束块的 prompt 喂给写稿 Agent → 写完再评审（闭环）
+```
+
+- `extract_facts` 用结构化 `value_set`（单位 + 允许数值集合），中文/阿拉伯数字通吃；同单位未必同量，所以一律标 `suspect` 候选，**复核后才能当正式契约**，不冒充确认结论。
+- `next_chapter_brief` 是评审结论的确定性转写，不新增判断；上轮是桩模式时会在 prompt 里明确标注，避免拿空判定当约束。
+- 伏笔台账落盘到缓存根（wheel 只读环境安全），`XIEZHI_CACHE_DIR` 可覆盖。
 
 ## 评分口径
 
@@ -142,14 +162,15 @@ python server.py               # stdio 模式，供写稿 Agent 挂载
 ```
 novel-review-mcp/
 ├── src/
-│   ├── server.py        # MCP 入口，15 个工具 + selfcheck
+│   ├── server.py        # MCP 入口，21 个工具 + selfcheck
 │   ├── engine.py        # 三审流水线 / 聚合判定 / 影响半径
-│   ├── layers.py        # L1 红线 + L2 打分 + P0 机器层信号（自洽/节奏/伏笔）
+│   ├── layers.py        # L1 红线 + L2 打分 + P0 机器层信号 + value_set 契约校验
+│   ├── facts.py         # P1 闭环：契约抽取 / 伏笔台账 / 评审回流约束块
 │   ├── summarizer.py    # 摘要金字塔（伏笔通用抽取）
 │   ├── llm.py           # 可插拔 LLM 网关
 │   ├── cache.py         # hash 增量缓存
 │   ├── config.py        # 配置加载（路径相对本文件，不依赖 cwd）
-│   ├── demo.py / test_pipeline.py / test_p0_signals.py
+│   ├── demo.py / test_pipeline.py / test_p0_signals.py / test_p1_guardrail.py
 │   └── *.yaml / prompts.md / requirements.txt
 ├── LICENSE / CHANGELOG.md / CONTRIBUTING.md
 ```

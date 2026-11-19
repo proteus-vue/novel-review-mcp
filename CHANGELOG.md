@@ -8,6 +8,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ## [Unreleased]
 
 ### Added
+- P1 闭环能力（评审从体检变写稿护栏，全部零 LLM）：
+  - `extract_facts`：从正文抽硬数据，生成结构化 `value_set` 候选契约（单位+允许数值，中文/阿拉伯数字通吃）；跨章同单位多值标 suspect。`layers.fact_check` 支持 value_set 校验。修复 P0 遗留的中文数字转换分支顺序 bug（"三百二十"曾得 0）。
+  - 伏笔台账：`foreshadow_register/close/list/overdue` 五个工具，去重登记、文本匹配回收、超期提醒；落盘到缓存根（wheel 只读安全），无章序信息不臆断超期。
+  - `next_chapter_brief`：把评审 issues/红队攻击点/否决信号 + 未收伏笔 + 人设锚回流成下一章写作约束块，含可直接喂写稿 Agent 的 prompt；桩模式明确标注。
+  - `test_p1_guardrail.py` 20 项测试，含"契约拦漂移且不误报规范写法"的闭环核心验证。
 - P0 机器层能力（AI 写小说场景）：
   - `check_self_consistency`：单章内部自洽弱信号，检测时序倒退、数字互斥、称谓变体；只报 suspect + 原文证据，不伪造 fatal/reject。原型来自独立评审实测的四类真问题。
   - `check_pacing` 去桩：爽点/冲突/钩子密度为确定性计算，含节奏荒漠检测；短章用原始计数避免密度外推失真。

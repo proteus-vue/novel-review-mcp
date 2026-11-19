@@ -83,14 +83,24 @@ def _cn_to_int(s: str) -> int | None:
         return digit[s]
     if s == "十":
         return 10
-    if s.startswith("十"):
-        return 10 + digit.get(s[1:], 0)
-    if "十" in s:
-        a, _, b = s.partition("十")
-        return digit.get(a, 0) * 10 + (digit.get(b, 0) if b else 0)
+    # 先拆大单位再拆小单位："三百二十"含"十"，若先判十会把"三百"当首字得 0
+    if "万" in s:
+        a, _, b = s.partition("万")
+        head = _cn_to_int(a)
+        return None if head is None else head * 10000 + (_cn_to_int(b) or 0)
+    if "千" in s:
+        a, _, b = s.partition("千")
+        head = _cn_to_int(a)
+        return None if head is None else head * 1000 + (_cn_to_int(b) or 0)
     if "百" in s:
         a, _, b = s.partition("百")
-        return digit.get(a, 0) * 100 + (_cn_to_int(b) or 0)
+        head = _cn_to_int(a)
+        return None if head is None else head * 100 + (_cn_to_int(b) or 0)
+    if s.startswith("十"):
+        return 10 + (_cn_to_int(s[1:]) or 0)
+    if "十" in s:
+        a, _, b = s.partition("十")
+        return (_cn_to_int(a) or 0) * 10 + (_cn_to_int(b) or 0)
     return None
 
 
@@ -275,7 +285,11 @@ def extract_foreshadow(text: str) -> list[str]:
 
 
 def fact_check(chapters: list[dict], facts: dict | None) -> list[dict]:
-    """跨章硬数据契约：must_not 命中 / must 缺失（must 按全书联合文本判定）。"""
+    """跨章硬数据契约：must_not 命中 / must 缺失 / value_set 数值越界。
+
+    must 按全书联合文本判定；value_set 按单位抽取数值（中文/阿拉伯通吃）逐章判定，
+    供 extract_facts 生成的候选契约使用，避免正则难以覆盖数字两种写法的问题。
+    """
     if not facts:
         return []
     rules = facts.get("rules", []) if isinstance(facts, dict) else []
@@ -283,6 +297,25 @@ def fact_check(chapters: list[dict], facts: dict | None) -> list[dict]:
     all_text = "\n".join(corpus.values())
     conflicts = []
     for r in rules:
+        # 结构化数值契约：同单位的数值必须落在允许集合内
+        if r.get("type") == "value_set":
+            unit = str(r.get("unit", ""))
+            allowed = {float(x) for x in (r.get("allowed") or [])}
+            if unit and allowed:
+                upat = re.compile(r"([0-9一二三四五六七八九十百千万两]+\.?[0-9]?)\s*" + re.escape(unit))
+                for cid, text in corpus.items():
+                    for m in upat.finditer(text):
+                        val = _cn_to_int(m.group(1))
+                        if val is not None and val not in allowed:
+                            conflicts.append({
+                                "chapter_id": cid,
+                                "field": r.get("name", f"数值契约/{unit}"),
+                                "evidence": m.group(0)[:80],
+                                "expected": f"单位「{unit}」应为 {sorted(allowed)} 之一",
+                                "suggestion": r.get("note", "对照契约修正数值"),
+                                "level": r.get("level", "suspect"),
+                            })
+            continue
         name = r.get("name", "未命名契约")
         for pat in r.get("must_not", []) or []:
             try:

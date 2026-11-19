@@ -28,7 +28,7 @@ novel-review-mcp = "server:main"   # 兼容旧技术标识
 
 [tool.setuptools]
 package-dir = {"" = "src"}
-py-modules = ["server", "engine", "layers", "summarizer", "llm", "cache", "config"]
+py-modules = ["server", "engine", "layers", "summarizer", "llm", "cache", "config", "facts"]
 
 [tool.setuptools.data-files]
 "xiezhi_review" = ["src/rules.yaml", "src/platforms.yaml", "src/benchmarks.yaml", "src/prompts.md"]

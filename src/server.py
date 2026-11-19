@@ -11,6 +11,7 @@ import sys
 
 import cache
 import engine
+import facts
 import layers
 from config import RULE_VERSION, PLATFORMS, BENCHMARKS, PROMPTS
 
@@ -99,6 +100,46 @@ async def check_pacing(chapters: list[dict]) -> dict:
 
 
 @mcp.tool()
+async def extract_facts(chapters: list[dict]) -> dict:
+    """从正文抽硬数据生成候选事实契约（fact_check 兼容）。零 LLM，候选需复核，含跨章同单位多值 suspect。"""
+    return facts.extract_facts(chapters)
+
+
+@mcp.tool()
+async def foreshadow_register(chapter_id: str, items: list[str], chapter_index: int | None = None) -> dict:
+    """登记伏笔到持久化台账（去重）；chapter_index 用于超期计算。"""
+    return facts.foreshadow_register(chapter_id, items, chapter_index)
+
+
+@mcp.tool()
+async def foreshadow_close(chapter_id: str, items: list[str], evidence: str = "") -> dict:
+    """回收伏笔：按文本匹配把台账 open 条目标记为 closed。"""
+    return facts.foreshadow_close(chapter_id, items, evidence)
+
+
+@mcp.tool()
+async def foreshadow_list(status: str = "open") -> dict:
+    """查看伏笔台账：status=open|closed|all。"""
+    return facts.foreshadow_list(status)
+
+
+@mcp.tool()
+async def foreshadow_overdue(current_chapter_index: int | None = None, max_age: int | None = None) -> dict:
+    """超期未收伏笔提醒；无章序信息时不臆断，返回空。"""
+    return facts.foreshadow_overdue(current_chapter_index, max_age)
+
+
+@mcp.tool()
+async def next_chapter_brief(review: dict, chapter_id: str = "", persona: str = "",
+                             platform: str = "qimao", facts: dict | None = None,
+                             current_chapter_index: int | None = None) -> dict:
+    """评审回流：把上轮评审结论+未收伏笔+人设锚转成下一章写作约束块（含可直接喂给写稿 Agent 的 prompt）。"""
+    return facts.next_chapter_brief(review, chapter_id=chapter_id, persona=persona,
+                                    platform=platform, facts=facts,
+                                    current_chapter_index=current_chapter_index)
+
+
+@mcp.tool()
 async def cache_stats() -> dict:
     """缓存命中统计与清空能力（clear=false 只看）。"""
     return {"stats": dict(cache.stats), "rule_version": RULE_VERSION}
@@ -142,6 +183,22 @@ def selfcheck() -> dict:
     sig = layers.pacing_signals("他成交了。对手反击。谁料还有后手？")
     checks["pacing_not_stub"] = sig.get("payoff", {}).get("count", 0) > 0 and \
         sig.get("conflict", {}).get("count", 0) > 0
+    # P1 闭环自检
+    fx = facts.extract_facts([
+        {"id": "A", "text": "一天三百二十单。"},
+        {"id": "B", "text": "一天二百九十单。"},
+    ])
+    checks["facts_extract_same_unit_conflict"] = any(
+        c["unit"] == "单" and c["level"] == "suspect" for c in fx["conflicts"])
+    checks["facts_contract_fact_check_compatible"] = all(
+        isinstance(r.get("must_not"), list) and isinstance(r.get("must"), list)
+        for r in fx["contract"]["rules"])
+    brief = facts.next_chapter_brief(
+        {"chapters": {"A": {"chapter_id": "A", "stages": {"red_team": {
+            "attack_points": [{"level": "high", "evidence": "无冲突", "suggestion": "加主动决策"}]}},
+            "overall": {"verdict": "修改后发布", "vetoes": []}}}},
+        chapter_id="C", persona="克制、算账")
+    checks["brief_reflows_review"] = bool(brief["must_avoid"]) and "写作约束" in brief["prompt"]
     return checks
 
 
