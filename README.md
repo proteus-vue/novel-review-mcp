@@ -21,17 +21,51 @@
 
 ## 安装
 
-需要 Python 3.10+。
+需要 Python 3.10+。代码里没有平台专属分支，路径全部走 `pathlib`，Windows / macOS / Linux 同一套源码。
 
 ```bash
 git clone <your-repo-url> novel-review-mcp
 cd novel-review-mcp
-python -m venv .venv
-source .venv/bin/activate        # Windows: .venv\Scripts\activate
-pip install -r src/requirements.txt
 ```
 
-也可打包安装：`pip install .`，之后直接运行 `xiezhi-review --selfcheck`（兼容旧命令 `novel-review-mcp`）。wheel 安装的配置文件位于 `<venv>/xiezhi_review/`，缓存默认写到 `~/.xiezhi_review/`，可用 `XIEZHI_CACHE_DIR` / `XIEZHI_CACHE_ROOT` 覆盖。
+创建虚拟环境：
+
+```bash
+# macOS / Linux
+python3 -m venv .venv && source .venv/bin/activate
+
+# Windows PowerShell
+py -3 -m venv .venv && .\.venv\Scripts\Activate.ps1
+
+# Windows CMD
+py -3 -m venv .venv && .venv\Scripts\activate.bat
+```
+
+安装依赖：
+
+```bash
+pip install -r src/requirements.txt
+# 或打包安装（推荐给非 Python 客户端）
+pip install .
+```
+
+`pip install .` 后会生成 `xiezhi-review` 命令（Windows 为 `xiezhi-review.exe`），旧命令 `novel-review-mcp` 保留兼容。wheel 安装的配置文件位于 `<venv>/xiezhi_review/`，缓存默认写到 `~/.xiezhi_review/`，可用 `XIEZHI_CACHE_DIR` / `XIEZHI_CACHE_ROOT` 覆盖。
+
+## 多语言
+
+**调用侧不限语言**：Server 走 MCP stdio（JSON-RPC），Node.js / Go / Rust / Java 等任何能启动子进程的客户端都能挂载；返回是纯 JSON，与客户端语言无关。
+
+**评审内容目前是中文网文规则**：`rules.yaml` / `prompts.md` / `platforms.yaml` 面向七猫 / 番茄 / 起点 / 晋江。要评审英文等其它语种，不需要改代码——另备一套同名配置文件（保持 stage key 与 JSON schema 一致），指向它即可：
+
+```bash
+# macOS / Linux
+export XIEZHI_CONFIG_DIR=/path/to/my-language-pack
+
+# Windows PowerShell
+$env:XIEZHI_CONFIG_DIR = "C:\path\to\my-language-pack"
+```
+
+该目录需包含 `rules.yaml`、`platforms.yaml`、`benchmarks.yaml`、`prompts.md`；配置整体切换，缓存也落在语言包目录。缺文件会明确报错，**不会静默回退到中文规则**。
 
 ## 接入 LLM（重要）
 
@@ -55,7 +89,7 @@ python test_pipeline.py        # 关键路径验证（假网关，9 项）
 python server.py               # stdio 模式，供写稿 Agent 挂载
 ```
 
-在客户端配置 stdio MCP server 时，command 指向 `python`，args 为 `[/绝对路径/src/server.py]`，cwd 设为 `src/`。
+在客户端配置 stdio MCP server 时，command 指向 `python`，args 为 `[/绝对路径/src/server.py]`，cwd 设为 `src/`。Windows 下 command 用 `python.exe` 绝对路径，args 形如 `["C:\\...\\novel-review-mcp\\src\\server.py"]`；若已 `pip install .`，也可直接用 `xiezhi-review` 命令，无需 cwd。环境变量用 `set`（CMD）或 `$env:NAME = "值"`（PowerShell）设置。
 
 ## MCP 工具（13 个）
 

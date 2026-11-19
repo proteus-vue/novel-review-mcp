@@ -10,19 +10,32 @@ import yaml
 
 BASE_DIR = Path(__file__).resolve().parent
 
-# 源码 / editable 安装：配置与模块同目录。
-# wheel 安装：setuptools data-files 落在 <prefix>/xiezhi_review/，不在 site-packages。
+# 配置目录优先级：外部语言包 > 源码/可编辑安装 > wheel 的 <prefix>/xiezhi_review/
+# 外部语言包用 XIEZHI_CONFIG_DIR 指向，可整包替换规则/平台/对标/提示词，无需改代码。
+_env_cfg = os.environ.get("XIEZHI_CONFIG_DIR", "").strip()
+_EXTERNAL_CONFIG_DIR = Path(_env_cfg).expanduser() if _env_cfg else None
 _PREFIX_CONFIG_DIR = Path(sys.prefix) / "xiezhi_review"
-CONFIG_DIR = BASE_DIR if (BASE_DIR / "rules.yaml").exists() else _PREFIX_CONFIG_DIR
+
+if _EXTERNAL_CONFIG_DIR and (_EXTERNAL_CONFIG_DIR / "rules.yaml").exists():
+    CONFIG_DIR = _EXTERNAL_CONFIG_DIR
+elif (BASE_DIR / "rules.yaml").exists():
+    CONFIG_DIR = BASE_DIR
+else:
+    CONFIG_DIR = _PREFIX_CONFIG_DIR
 if not (CONFIG_DIR / "rules.yaml").exists():
     raise FileNotFoundError(
-        f"缺少配置文件目录: {CONFIG_DIR}（源码运行请保留 src/*.yaml；wheel 安装请重新安装）"
+        f"缺少配置文件目录: {CONFIG_DIR}（源码运行请保留 src/*.yaml；"
+        "wheel 安装请重新安装；语言包请设置 XIEZHI_CONFIG_DIR）"
     )
 
-# wheel 安装后 site-packages 可能只读，缓存改写到用户目录；源码运行维持 src/.review_cache
-CACHE_ROOT = BASE_DIR if CONFIG_DIR == BASE_DIR else Path(
-    os.environ.get("XIEZHI_CACHE_ROOT", str(Path.home() / ".xiezhi_review"))
-)
+# 缓存落点：外部语言包 → 语言包目录；源码 → src/.review_cache；
+# wheel → 用户目录（site-packages 可能只读），均可用 XIEZHI_CACHE_DIR 覆盖
+if _EXTERNAL_CONFIG_DIR and CONFIG_DIR == _EXTERNAL_CONFIG_DIR:
+    CACHE_ROOT = CONFIG_DIR
+elif CONFIG_DIR == BASE_DIR:
+    CACHE_ROOT = BASE_DIR
+else:
+    CACHE_ROOT = Path(os.environ.get("XIEZHI_CACHE_ROOT", str(Path.home() / ".xiezhi_review")))
 
 
 def _load_yaml(name: str) -> dict:
