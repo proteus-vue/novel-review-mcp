@@ -9,6 +9,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Changed
 - 品牌命名：中文名定为「獬豸」（Xiezhi），取神兽明辨是非、触退无理者之意，对应三审/红队/闸门一票否决；包名与 MCP Server 标识改为 `xiezhi-review`，旧 `novel-review-mcp` 控制台命令保留兼容。
+- 修复 wheel 安装：配置文件改为同时支持源码目录与 `<prefix>/xiezhi_review/`，缓存从只读 site-packages 迁到用户目录（`XIEZHI_CACHE_DIR` 可覆盖）；`pip install .` 后控制台命令可直接运行。
 
 ## [0.3.0] - 2026-11-19
 

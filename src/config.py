@@ -1,16 +1,32 @@
 """配置加载：规则/平台/对标/提示词，路径全部相对本文件，避免 cwd 坑。"""
 from __future__ import annotations
 
+import os
 import re
+import sys
 from pathlib import Path
 
 import yaml
 
 BASE_DIR = Path(__file__).resolve().parent
 
+# 源码 / editable 安装：配置与模块同目录。
+# wheel 安装：setuptools data-files 落在 <prefix>/xiezhi_review/，不在 site-packages。
+_PREFIX_CONFIG_DIR = Path(sys.prefix) / "xiezhi_review"
+CONFIG_DIR = BASE_DIR if (BASE_DIR / "rules.yaml").exists() else _PREFIX_CONFIG_DIR
+if not (CONFIG_DIR / "rules.yaml").exists():
+    raise FileNotFoundError(
+        f"缺少配置文件目录: {CONFIG_DIR}（源码运行请保留 src/*.yaml；wheel 安装请重新安装）"
+    )
+
+# wheel 安装后 site-packages 可能只读，缓存改写到用户目录；源码运行维持 src/.review_cache
+CACHE_ROOT = BASE_DIR if CONFIG_DIR == BASE_DIR else Path(
+    os.environ.get("XIEZHI_CACHE_ROOT", str(Path.home() / ".xiezhi_review"))
+)
+
 
 def _load_yaml(name: str) -> dict:
-    path = BASE_DIR / name
+    path = CONFIG_DIR / name
     if not path.exists():
         raise FileNotFoundError(f"缺少配置文件: {path}")
     return yaml.safe_load(path.read_text(encoding="utf-8")) or {}
@@ -25,7 +41,7 @@ RULE_VERSION = str(RULES.get("version", "0.0.0"))
 
 def load_prompts() -> dict[str, str]:
     """按 `## key` 拆分 prompts.md。key 与工具调用严格一致。"""
-    text = (BASE_DIR / "prompts.md").read_text(encoding="utf-8")
+    text = (CONFIG_DIR / "prompts.md").read_text(encoding="utf-8")
     parts = re.split(r"(?m)^##\s+([A-Za-z0-9_]+)\s*$", text)
     # parts = [preamble, key1, body1, key2, body2, ...]
     return {parts[i]: parts[i + 1].strip() for i in range(1, len(parts) - 1, 2)}

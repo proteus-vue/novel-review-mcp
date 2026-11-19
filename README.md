@@ -31,6 +31,8 @@ source .venv/bin/activate        # Windows: .venv\Scripts\activate
 pip install -r src/requirements.txt
 ```
 
+也可打包安装：`pip install .`，之后直接运行 `xiezhi-review --selfcheck`（兼容旧命令 `novel-review-mcp`）。wheel 安装的配置文件位于 `<venv>/xiezhi_review/`，缓存默认写到 `~/.xiezhi_review/`，可用 `XIEZHI_CACHE_DIR` / `XIEZHI_CACHE_ROOT` 覆盖。
+
 ## 接入 LLM（重要）
 
 L3 语义评审必须由模型判断。未配置模型时 Server 使用**离线桩**，明确输出 `stub_no_judgement` / "未定"，**不会伪造通过率**。

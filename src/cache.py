@@ -3,11 +3,17 @@ from __future__ import annotations
 
 import hashlib
 import json
+import os
 from pathlib import Path
 
-from config import BASE_DIR, RULE_VERSION, efficiency_cfg
+from config import CACHE_ROOT, RULE_VERSION, efficiency_cfg
 
-CACHE_DIR = BASE_DIR / efficiency_cfg().get("cache", {}).get("dir", ".review_cache")
+CACHE_DIR = Path(
+    os.environ.get(
+        "XIEZHI_CACHE_DIR",
+        str(CACHE_ROOT / efficiency_cfg().get("cache", {}).get("dir", ".review_cache")),
+    )
+)
 CACHE_FILE = CACHE_DIR / "results.json"
 _MEMORY: dict[str, dict] | None = None
 
