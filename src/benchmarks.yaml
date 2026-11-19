@@ -1,0 +1,68 @@
+# 对标头部基线（benchmark）
+# 思路：把头部作品拆成可量化维度（情绪内核/叙事调性/反击方式/系统感），
+# 不比文笔好坏，只比结构密度与留存设计。baseline 可换成你自己拆解的头部样本值。
+version: "0.3.0"
+
+# 维度定义：id -> 判据 / 满分基线 / 权重 / 低于阈值才算 gap
+dimensions:
+  - id: opening_hook
+    desc: 前 300 字是否完成 主角+冲突/异常+悬念
+    baseline: 10
+    weight: 0.18
+    gap_below: 7
+  - id: payoff_density
+    desc: 爽点/回报密度，每 2000 字至少 1 个有效回报
+    baseline: 10
+    weight: 0.16
+    gap_below: 6
+  - id: agency
+    desc: 主角能动性——是主动选择还是全程被动承受
+    baseline: 10
+    weight: 0.14
+    gap_below: 7
+  - id: memory_anchor
+    desc: 具象化记忆点（外貌/道具/行为模式/口头禅）
+    baseline: 8
+    weight: 0.10
+    gap_below: 5
+  - id: chapter_end_hook
+    desc: 章末钩子强度与形态（否决"氛围收尾/格言总结"）
+    baseline: 10
+    weight: 0.16
+    gap_below: 6
+  - id: logic_closure
+    desc: 因果闭合，无"恰好/没想到"硬巧合
+    baseline: 10
+    weight: 0.12
+    gap_below: 7
+  - id: voice_freshness
+    desc: 叙述声音新鲜度，无套语堆积/升华结尾
+    baseline: 8
+    weight: 0.08
+    gap_below: 5
+  - id: emotion_curve
+    desc: 情绪曲线有起伏，非一路平铺或全程压抑
+    baseline: 8
+    weight: 0.06
+    gap_below: 5
+
+# 平台对基线的加权覆盖（沿用各平台 tone）
+platform_overrides:
+  qimao:
+    payoff_density: {baseline: 10, weight: 0.22}
+    opening_hook: {baseline: 10, weight: 0.20}
+  fanqie:
+    chapter_end_hook: {baseline: 10, weight: 0.20}
+    payoff_density: {baseline: 10, weight: 0.20}
+  qidian:
+    logic_closure: {baseline: 10, weight: 0.20}
+    agency: {baseline: 10, weight: 0.16}
+  jinjiang:
+    emotion_curve: {baseline: 10, weight: 0.16}
+    voice_freshness: {baseline: 10, weight: 0.14}
+
+# 对标结论映射：total 为加权分（0-10）
+verdict:
+  at_or_above: 8.0      # 达到/接近头部基线
+  near: 6.5             # 接近但有明显 gap
+  below: 6.5            # 低于则有系统性差距，需专项补强

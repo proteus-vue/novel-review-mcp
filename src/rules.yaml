@@ -1,0 +1,185 @@
+# 小说评审规则库 —— 三审 + 红队 + 反漂移
+# 设计原则：
+#   1) 形态/结构判据优先于枚举黑名单（固定词表漏变得快，形态判据 0 误报）
+#   2) 可复现技术细节用结构识别（换路径名就能绕过命令黑名单）
+#   3) 词表扫不出叙述声音与逻辑断链，这两类必须进 L3 语义评审
+version: "0.3.0"
+
+meta:
+  name: novel-review
+  stages: [first_review, second_review, third_review, red_team, benchmark, anti_drift]
+
+# ---------------- 三审流水线（对齐七猫初审/复审/终审的三道闸门）----------------
+pipeline:
+  - stage: first_review
+    name: 一审 · 合规与定位（一票否决）
+    gate: veto
+    layers: [L1, L2, L3]
+    veto: true
+    checks: [redline, platform_fit, opening]
+  - stage: second_review
+    name: 二审 · 内容质量（黄金三章/爽点/逻辑）
+    gate: score
+    layers: [L3]
+    checks: [hook, payoff, agency, logic_closure, structure]
+  - stage: third_review
+    name: 三审 · 批次与全书终审（漂移/伏笔/数据/AI味）
+    gate: score
+    layers: [L2, L3, facts]
+    checks: [persona_drift, foreshadow, facts_consistency, ai_flavor, chapter_naming]
+  - stage: red_team
+    name: 红队 · 挑刺（独立视角，只找问题）
+    gate: advisory
+    layers: [L3]
+    checks: [new_problems_after_revision, logic_holes, motivation_break, cheap_coincidence]
+  - stage: benchmark
+    name: 对标 · 头部基线（结构密度对比）
+    gate: advisory
+    layers: [L3]
+    checks: [benchmarks.yaml 全维度]
+  - stage: anti_drift
+    name: 反漂移 · 跨章记忆
+    gate: score
+    layers: [L1, L2, facts, summary]
+    checks: [entity_consistency, hard_data, foreshadow_registry, timeline]
+
+# ---------------- L1：形态/结构红线（毫秒级）----------------
+hard_reject:
+  - id: reproducible_command
+    pattern: '(?:\b(?:sudo|rm\s+-rf|chmod|chown|curl|wget|ssh|mysql|psql|UPDATE\s+\w+\s+SET|DELETE\s+FROM|DROP\s+TABLE|/etc/|/var/log/|/home/)\b)'
+    action: reject
+    level: fatal
+    hint: 技术描写停在流程/结果层，不写可复现命令/路径
+  - id: real_brand_in_book_title
+    pattern: '《[^》]*(?:金士顿|肯德基|麦当劳|华为|小米|腾讯|阿里|Oracle|Windows)[^》]*》'
+    action: flag
+    level: serious
+    hint: 书名号内容用形态白名单——只允许虚构内部文件（含公文词缀或数字）或真实法律法规
+  - id: internal_marker_leak
+    pattern: '【本章标注】|【新埋伏笔|【回收伏笔'
+    action: reject
+    level: fatal
+    hint: 发布正文严禁内部标注块泄漏（项目专属编号/代号请用 facts 契约按项目配置）
+  - id: markdown_residue
+    pattern: '^\s*#{1,6}\s|\*\*[^*]+\*\*|^\s*```'
+    action: reject
+    level: serious
+    hint: 发布版为纯文本，去 Markdown
+  - id: exclamation_in_title
+    pattern: '^.{0,20}[!！]'
+    action: flag
+    level: minor
+    hint: 章名禁用感叹号
+
+# ---------------- L2：关键词/结构打分（百毫秒级）----------------
+classifier:
+  - id: violence_graphic
+    desc: 血腥细节、可复现犯罪手法
+    level: fatal
+    threshold: 0.6
+    keywords: [鲜血喷涌, 剖开, 自制炸弹, 毒药配比, 分尸]
+  - id: immoral_value
+    desc: 出轨洗白/反派笑到最后/违法不受罚
+    level: serious
+    threshold: 0.65
+    keywords: [法律拿他没办法, 逍遥法外, 出轨也没什么]
+  - id: ai_flavor
+    desc: AI 味红黄牌（词表能扫的部分）
+    level: minor
+    threshold: 0.5
+    red_words: [仿佛, 似乎, 宛如, 在这一刻, 五味杂陈, 值得一提的是, 让我们, 某种意义上, 悄然, 不由得, 下意识地, 沉默了片刻]
+    red_word_limit_per_chapter: 2
+    patterns:
+      - {id: not_a_but_b, pattern: '不是.{1,12}而是', limit: 2}
+      - {id: this_is_x, pattern: '这，就是', limit: 1}
+      - {id: dash_overuse, pattern: '——', limit: 3}
+  - id: weak_hook
+    desc: 章末套语（氛围收尾/格言总结）
+    level: minor
+    threshold: 0.6
+    keywords: [他知道, 这一切才刚刚开始, 故事还在继续, 未完待续, 仿佛一切都]
+
+# ---------------- 反漂移：人设信号 + 硬数据契约 ----------------
+anti_drift:
+  persona_signals:
+    - id: over_explaining
+      desc: 主角长篇解释/说教——克制型角色漂移信号
+      pattern: '(?:\u4ed6|\u5979)(?:解释道|说道).{60,}'
+      level: mid
+    - id: emotional_outburst
+      desc: 怒吼/拍桌——冷静型角色漂移
+      pattern: '怒吼|拍案|拍桌子|大声吼道'
+      level: high
+    - id: show_off_after
+      desc: 事后炫耀——无声反杀型角色漂移
+      pattern: '扬长而去|冷笑一声|得意地'
+      level: mid
+    - id: cost_free_power
+      desc: 使用能力无顾虑/无代价——金手指边界漂移
+      pattern: '毫无顾忌|没有任何代价|随便用用'
+      level: high
+    - id: address_mix
+      desc: 称谓混用（老王/小王/全名混用）
+      pattern: '老王(?!默)|小王(?!默)'
+      level: mid
+  facts_schema:
+    rules:
+      - name: str            # 契约名
+        must_not: [str]      # 正则，命中即冲突
+        must: [str]          # 正则，缺失即冲突（可选）
+        note: str            # 事故背景/召回距离
+  foreshadow:
+    registry_required: true
+    id_pattern: 'F\d{1,3}'
+    check: 正文引用的编号是否都在登记表；章末是否有 新埋/回收 两行标注
+
+# ---------------- 评分与判定 ----------------
+rubric:
+  dimensions:
+    - {id: persona, name: 人设一致性, weight: 0.30}
+    - {id: structure_payoff, name: 结构与爽点, weight: 0.25}
+    - {id: continuity, name: 连续与伏笔, weight: 0.20}
+    - {id: ai_flavor_voice, name: AI味与文字, weight: 0.25}
+  verdict:
+    pass: 80          # 宽松档 ≥80 放行
+    revise: 70        # 70-79 修改后发布
+    rewrite: 70       # <70 重写
+    fatal_overrides: true   # 致命项一票否决，无视分数
+
+# 严格档闸门（编辑三审+对标头部+红队挑刺的正式验收标准）
+# 批次均分≥90、单章≥85、<80 重写；红队/对标拥有一票否决权。
+# 独立视角必须做成硬闸门：否则单章被拒仍可能被批次均分稀释放行。
+strict_gate:
+  enabled: true
+  batch_avg_min: 90
+  chapter_min: 85
+  chapter_rewrite_below: 80
+  red_team_veto: true        # 红队 blocking 或 verdict=reject → 该章不过，批次不放行
+  benchmark_veto: true       # 对标 verdict=below → 该章不过，批次不放行
+  mid_issues_min_for_gate: 1 # 高/致命 issue 数 ≥1 时触发复核标记
+
+# ---------------- 复审铁律（红队核心）----------------
+revision_policy:
+  delta_threshold: 10        # 改动 ≥10 处必须复审
+  must_ask: 改出什么新问题
+  rescan_required: true      # 改完必回扫引用处
+  self_harm_types: [改A处未回扫引用处, 新写接缝句撞车, 删段留悬空指代, 改写未到位, 标注与新正文不符]
+
+# ---------------- 高效机制 ----------------
+efficiency:
+  cache:
+    enabled: true
+    key_parts: [rule_version, platform, stage, chapter_hash]
+    dir: .review_cache
+  summary_pyramid:
+    enabled: true
+    chars: 200             # 跨章检查只喂摘要
+  parallel:
+    llm_concurrency: 4
+  impact_radius:
+    default: 1             # 改第 N 章 → 重评 N±1 的摘要 + N 全文
+    full_rescan_every_n: 10
+  budget:
+    l1_l2_ms_max: 1000
+    five_chapter_target_sec: 60
+    no_full_volume_reread: true

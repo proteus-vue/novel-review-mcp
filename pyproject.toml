@@ -1,0 +1,33 @@
+[build-system]
+requires = ["setuptools>=61"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "novel-review-mcp"
+version = "0.3.0"
+description = "小说投稿评审 MCP Server：三审 + 红队 + 头部对标 + 反漂移 + 增量高效"
+readme = "README.md"
+requires-python = ">=3.10"
+license = {text = "MIT"}
+authors = [{name = "novel-review-mcp contributors"}]
+keywords = ["mcp", "novel", "writing", "review", "editorial"]
+dependencies = [
+    "mcp>=1.0.0",
+    "pyyaml>=6.0",
+]
+
+[project.optional-dependencies]
+dev = ["pytest>=7"]
+
+[project.urls]
+Homepage = "https://github.com/your-org/novel-review-mcp"
+
+[project.scripts]
+novel-review-mcp = "server:main"
+
+[tool.setuptools]
+package-dir = {"" = "src"}
+py-modules = ["server", "engine", "layers", "summarizer", "llm", "cache", "config", "demo", "test_pipeline"]
+
+[tool.setuptools.data-files]
+"novel_review_mcp" = ["src/rules.yaml", "src/platforms.yaml", "src/benchmarks.yaml", "src/prompts.md"]
