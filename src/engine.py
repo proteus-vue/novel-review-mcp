@@ -6,11 +6,14 @@ import time
 from typing import Any
 
 import cache
+import committee
 import layers
 import summarizer
+import telemetry
 from config import (
     PROMPTS,
     RULES,
+    dual_review_cfg,
     efficiency_cfg,
     get_benchmark_dimensions,
     get_platform,
@@ -18,21 +21,113 @@ from config import (
     revision_policy,
     rubric_cfg,
 )
-from llm import judge
+from llm import get_secondary_gateway, judge
 
 _sem = asyncio.Semaphore(efficiency_cfg().get("parallel", {}).get("llm_concurrency", 4))
 
 
-async def _llm_stage(prompt_key: str, *, text: str = "", summary: str = "", **kwargs) -> dict:
+async def _llm_stage(prompt_key: str, *, text: str = "", summary: str = "",
+                     _stage: str | None = None, _gateway=None, **kwargs) -> dict:
     prompt = render_prompt(prompt_key, text=text, summary=summary, **kwargs)
+    stage = _stage or prompt_key
+    entered = time.perf_counter()
     async with _sem:
-        return await judge(prompt)
+        called = time.perf_counter()
+        try:
+            result = await judge(prompt, gateway=_gateway)
+        except Exception as exc:
+            tel = telemetry.current()
+            if tel is not None:
+                tel.record_error(stage, str(exc))
+            raise
+    tel = telemetry.current()
+    if tel is not None:
+        meta = dict(result.get("_telemetry") or {})
+        meta["queue_sec"] = round(called - entered, 4)
+        tel.record_llm(stage, meta)
+    return result
+
+
+async def _dual_llm_stage(prompt_key: str, stage: str, **kwargs) -> dict:
+    """P2b：对单一 stage 做双路评审并返回合并结果。
+
+    返回结构保留原 stage 字段（merged）+ `_dual` 审计块；不抛异常，
+    任一路失败则退化为单路并在 `_dual.degraded` 标注，绝不静默当成一致。
+    """
+    cfg = dual_review_cfg()
+    secondary, independent = get_secondary_gateway()
+
+    # 两路并行；第二路换模型/后端但 prompt 完全一致，判定口径不变。
+    # 走 _llm_stage 保证两路都进 telemetry 账本（成本/耗时如实反映翻倍）。
+    results = await asyncio.gather(
+        _llm_stage(prompt_key, _stage=stage, **kwargs),
+        _llm_stage(prompt_key, _stage=stage, _gateway=secondary, **kwargs),
+        return_exceptions=True,
+    )
+    primary = results[0] if isinstance(results[0], dict) else {"_error": str(results[0])}
+    if isinstance(results[1], dict):
+        second = results[1]
+        degraded = False
+    else:
+        second, degraded = {}, True
+
+    merged = committee.merge_pair(stage, primary, second, cfg)
+    out = merged["merged"]
+    out["_dual"] = {
+        "enabled": True,
+        "independent": bool(independent),
+        "degraded": degraded,
+        "disagreement": merged["disagreement"],
+        "reasons": merged["reasons"],
+        "scores": merged["scores"],
+        "verdicts": merged["verdicts"],
+        "backend_pair": [primary.get("_backend"), second.get("_backend", primary.get("_backend"))],
+        "model_pair": [primary.get("_model"), second.get("_model", primary.get("_model"))],
+        "note": (
+            "双评审一致" if not merged["disagreement"] else
+            "双评审分歧，禁止自动放行，需人工复核"
+        ),
+    }
+    return out
+
+
+def _dual_extra_calls() -> int:
+    """双评审开启时每章额外 LLM 调用数（红队/对标各 +1），用于修正成本估算。"""
+    cfg = dual_review_cfg()
+    if not cfg.get("enabled", False):
+        return 0
+    return len(set(cfg.get("stages", ["red_team", "benchmark"])) & {"red_team", "benchmark"})
 
 
 # ---------------------------------------------------------------------------
 # 单章三审：一审硬拒短路，二审内容质量，三审终审漂移/伏笔/数据
 # ---------------------------------------------------------------------------
 async def review_chapter(
+    text: str,
+    chapter_id: str = "",
+    platform: str = "qimao",
+    facts: dict | None = None,
+    persona: str = "",
+    revision_note: str = "",
+) -> dict:
+    """对外入口：附带真实计时/成本账本；评分与闸门口径不变。"""
+    wall0 = time.perf_counter()
+    child, token, parent = telemetry.begin()
+    try:
+        result = await _review_chapter_impl(text, chapter_id, platform, facts, persona, revision_note)
+    finally:
+        snapshot = telemetry.end(child, token, parent)
+    result["timing"] = {
+        "wall_sec": round(time.perf_counter() - wall0, 4),
+        "llm_cumulative_sec": round(child.llm_sec, 4),
+        "llm_queue_sec": round(child.queue_sec, 4),
+        "source": "review_chapter",
+    }
+    result["telemetry"] = snapshot
+    return result
+
+
+async def _review_chapter_impl(
     text: str,
     chapter_id: str = "",
     platform: str = "qimao",
@@ -92,22 +187,33 @@ async def review_chapter(
     result["stages"]["first_review"] = first
 
     # 二审/三审/红队/对标并行（无依赖）
+    # P2b：红队/对标可按配置走双评审，其余阶段始终单评审，控制成本。
+    dcfg = dual_review_cfg()
+    dual_enabled = bool(dcfg.get("enabled", False))
+    dual_stages = set(dcfg.get("stages", ["red_team", "benchmark"]))
+
+    def _pick(name: str, key: str, kwargs: dict):
+        if dual_enabled and name in dual_stages:
+            return _dual_llm_stage(key, name, **kwargs)
+        return _llm_stage(key, _stage=name, **kwargs)
+
     tasks = [
-        ("second_review", _llm_stage(
-            "second_review", text=text[:6000],
-            platform=profile.get("name", plat_key),
-            profile=str(profile.get("must_have", [])),
-        )),
-        ("third_review", _llm_stage(
-            "third_review", text=text[:6000],
-            persona=persona or "未提供人设铁律，按通用一致性判",
-            facts=str(facts or {}),
-        )),
-        ("red_team", _llm_stage("red_team", text=text[:6000], revision_note=revision_note or "无改动记录")),
-        ("benchmark", _llm_stage(
-            "benchmark", text=text[:6000],
-            baseline=str([{"id": d["id"], "baseline": d["baseline"]} for d in get_benchmark_dimensions(plat_key)]),
-        )),
+        ("second_review", _pick("second_review", "second_review", {
+            "text": text[:6000], "platform": profile.get("name", plat_key),
+            "profile": str(profile.get("must_have", [])),
+        })),
+        ("third_review", _pick("third_review", "third_review", {
+            "text": text[:6000],
+            "persona": persona or "未提供人设铁律，按通用一致性判",
+            "facts": str(facts or {}),
+        })),
+        ("red_team", _pick("red_team", "red_team", {
+            "text": text[:6000], "revision_note": revision_note or "无改动记录",
+        })),
+        ("benchmark", _pick("benchmark", "benchmark", {
+            "text": text[:6000],
+            "baseline": str([{"id": d["id"], "baseline": d["baseline"]} for d in get_benchmark_dimensions(plat_key)]),
+        })),
     ]
     results = await asyncio.gather(*[t[1] for t in tasks], return_exceptions=True)
     for (name, _), val in zip(tasks, results):
@@ -137,10 +243,18 @@ async def review_chapter(
     if fatal:
         vetoes.append("L1致命红线")
 
+    # P2b：双评审分歧单独汇总；分歧不是否决，但禁止自动放行，必须人工复核。
+    dual_pairs = {name: result["stages"].get(name, {}).get("_dual")
+                  for name in ("red_team", "benchmark")}
+    committee_report = committee.summarize_committee(dual_pairs)
+    disagreements = committee_report["disagreements"]
+
     if second.get("_stub") or third.get("_stub"):
         verdict = "未定（L3 桩模式）"
     elif vetoes:
         verdict = "禁止发布（" + "、".join(vetoes) + "）"
+    elif disagreements:
+        verdict = "修改后发布（双评审分歧待人工复核：" + "、".join(disagreements) + "）"
     elif gate.get("enabled", False) and total < gate.get("chapter_min", 85):
         verdict = "修改后发布（未达严格档单章线 %s）" % gate.get("chapter_min", 85)
     else:
@@ -150,6 +264,7 @@ async def review_chapter(
     result["overall"] = {
         "pass": verdict == "放行", "verdict": verdict, "score": total,
         "vetoes": vetoes, "dimension_scores": score_map,
+        "committee": committee_report,
         "red_team": {"blocking": bool(red.get("blocking")), "verdict": red.get("verdict")},
         "benchmark": {"verdict": bench.get("verdict"), "total": bench.get("total")},
     }
@@ -188,16 +303,55 @@ async def review_batch(
     persona: str = "",
     revised_ids: list[str] | None = None,
 ) -> dict:
+    """对外入口：批次真实计时/成本账本；闸门与评分口径不变。"""
+    wall0 = time.perf_counter()
+    child, token, parent = telemetry.begin()
+    try:
+        report = await _review_batch_impl(chapters, platform, facts, persona, revised_ids)
+    finally:
+        snapshot = telemetry.end(child, token, parent)
+
+    config = report.setdefault("timing", {})
+    config.update({
+        "wall_sec": round(time.perf_counter() - wall0, 4),
+        "llm_cumulative_sec": round(child.llm_sec, 4),
+        "llm_queue_sec": round(child.queue_sec, 4),
+        "source": "review_batch",
+    })
+    report["telemetry"] = snapshot
+    efficiency = report.setdefault("efficiency", {})
+    efficiency["llm_calls_actual"] = snapshot["llm_calls"]
+    efficiency["llm_errors_actual"] = snapshot["llm_errors"]
+    efficiency["llm_queue_sec"] = snapshot["llm_queue_sec"]
+    efficiency["tokens"] = snapshot["tokens"]
+    efficiency["estimate_vs_actual_note"] = (
+        "llm_calls_estimate 保留旧字段兼容；actual/tokens/timing 来自真实调用账本，"
+        "并发下 llm_cumulative_sec 可大于 wall_sec。"
+    )
+    return report
+
+
+async def _review_batch_impl(
+    chapters: list[dict],
+    platform: str = "qimao",
+    facts: dict | None = None,
+    persona: str = "",
+    revised_ids: list[str] | None = None,
+) -> dict:
     t0 = time.time()
     cache.reset_stats()
     profile, plat_key = get_platform(platform)
     plan = impact_radius(chapters, revised_ids)
     by_id = {c.get("id"): c for c in chapters}
+    phases: dict[str, float] = {}
+    p0 = time.perf_counter()
 
     # 1) 全章 L1/L2 前置（毫秒级，任何章都不跳过红线）
     redline = {cid: {"l1": layers.l1_check(c.get("text", "")), "l2": layers.l2_check(c.get("text", ""))}
                for cid, c in by_id.items()}
     rejected = [cid for cid, r in redline.items() if layers.has_hard_reject(r["l1"])]
+    phases["l1_l2_sec"] = round(time.perf_counter() - p0, 4)
+    p0 = time.perf_counter()
 
     # 2) 只对 full 集合做三审并行；reuse 集合读缓存
     full = [cid for cid in plan["full"] if cid in by_id and cid not in rejected]
@@ -205,6 +359,8 @@ async def review_batch(
         review_chapter(by_id[cid].get("text", ""), str(cid), plat_key, facts, persona)
         for cid in full
     ])
+    phases["chapter_review_sec"] = round(time.perf_counter() - p0, 4)
+    p0 = time.perf_counter()
     chapter_reports = {}
     for cid in rejected:
         chapter_reports[cid] = {"status": "reject", "hits": redline[cid]["l1"]}
@@ -219,6 +375,8 @@ async def review_batch(
         [by_id[cid] for cid in plan["full"] + plan["summary_only"] if cid in by_id]
     )
     summary_text = summarizer.compact(summaries)
+    phases["summary_sec"] = round(time.perf_counter() - p0, 4)
+    p0 = time.perf_counter()
     anti_drift = await _llm_stage("anti_drift", summary=summary_text, facts=str(facts or {}), persona=persona or "未指定")
     fact_conflicts = layers.fact_check(chapters, facts)
 
@@ -232,6 +390,8 @@ async def review_batch(
             text=summary_text,
             revision_note=f"共改动 {len(revised_ids or [])} 处，{rev.get('must_ask', '改出什么新问题')}",
         )
+    phases["cross_chapter_sec"] = round(time.perf_counter() - p0, 4)
+    p0 = time.perf_counter()
 
     # 5) 聚合
     scores = [r["overall"]["score"] for r in chapter_reports.values()
@@ -248,20 +408,28 @@ async def review_batch(
     gate_on = gate.get("enabled", False)
     low_chapters = []
     veto_chapters = []
+    disagreement_chapters = []
     for cid, r in chapter_reports.items():
         ov = r.get("overall", {}) if isinstance(r, dict) else {}
         if ov.get("vetoes"):
             veto_chapters.append({"id": cid, "vetoes": ov["vetoes"]})
         if gate_on and isinstance(ov.get("score"), (int, float)) and ov["score"] < gate.get("chapter_min", 85):
             low_chapters.append({"id": cid, "score": ov["score"]})
+        cm = ov.get("committee", {})
+        if isinstance(cm, dict) and cm.get("disagreements"):
+            disagreement_chapters.append({"id": cid, "stages": cm["disagreements"]})
 
     if stub_mode:
         verdict = "未定（L3 桩模式，未调用真实模型）"
     else:
         hard_block = bool(rejected) or bool(veto_chapters) or anti_drift.get("pass") is False
+        # 双评审分歧不是否决，但同样禁止自动放行（升级人工复核）。
+        hard_block = hard_block or bool(disagreement_chapters)
         if gate_on:
             hard_block = hard_block or (avg < gate.get("batch_avg_min", 90)) or bool(low_chapters)
-        if hard_block:
+        if disagreement_chapters and not (rejected or veto_chapters or anti_drift.get("pass") is False):
+            verdict = "修改后发布（双评审分歧待人工复核）"
+        elif hard_block:
             verdict = "禁止发布（未达严格档闸门）"
         else:
             verdict = "放行"
@@ -273,8 +441,16 @@ async def review_batch(
         "chapter_min": gate.get("chapter_min", 85),
         "low_chapters": low_chapters,
         "veto_chapters": veto_chapters,
+        "disagreement_chapters": disagreement_chapters,
         "l1_rejected": rejected,
         "anti_drift_pass": anti_drift.get("pass"),
+    }
+    dcfg = dual_review_cfg()
+    committee_summary = {
+        "enabled": bool(dcfg.get("enabled", False)),
+        "stages": list(dcfg.get("stages", ["red_team", "benchmark"])),
+        "disagreement_gap": dcfg.get("disagreement_gap", 10),
+        "disagreement_chapters": disagreement_chapters,
     }
 
     for cid in full:
@@ -291,18 +467,21 @@ async def review_batch(
         "impact_plan": plan,
         "efficiency": {
             "cache_hits": cache.stats["hits"], "cache_misses": cache.stats["misses"],
-            "llm_calls_estimate": len(full) * 4 + len(summaries) + 2 + (1 if re_review else 0),
+            "llm_calls_estimate": len(full) * (4 + _dual_extra_calls()) + len(summaries) + 2 + (1 if re_review else 0),
             "full_text_llm_chapters": len(full),
             "summary_only_llm_chapters": len(plan["summary_only"]),
             "no_full_volume_reread": efficiency_cfg().get("budget", {}).get("no_full_volume_reread", True),
         },
         "anti_drift": {"llm": anti_drift, "fact_conflicts": fact_conflicts},
         "strict_gate": gate_report,
+        "committee": committee_summary,
         "re_review_triggered": need_re_review,
         "re_review": re_review,
         "chapters": chapter_reports,
+        "timing": {"phases": phases},
         "elapsed_sec": round(time.time() - t0, 2),
     }
+    phases["aggregate_sec"] = round(time.perf_counter() - p0, 4)
     cache.flush()
     return report
 

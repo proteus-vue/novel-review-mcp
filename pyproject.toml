@@ -4,7 +4,7 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "xiezhi-review"
-version = "0.3.0"
+version = "0.4.0"
 description = "獬豸（Xiezhi）· 小说投稿评审 MCP Server：三审 + 红队 + 头部对标 + 反漂移 + 增量高效"
 readme = "README.md"
 requires-python = ">=3.10"
@@ -20,7 +20,9 @@ dependencies = [
 dev = ["pytest>=7"]
 
 [project.urls]
-Homepage = "https://github.com/your-org/xiezhi-review"
+Homepage = "https://github.com/proteus-vue/novel-review-mcp"
+Repository = "https://github.com/proteus-vue/novel-review-mcp"
+Issues = "https://github.com/proteus-vue/novel-review-mcp/issues"
 
 [project.scripts]
 xiezhi-review = "server:main"
@@ -28,7 +30,7 @@ novel-review-mcp = "server:main"   # 兼容旧技术标识
 
 [tool.setuptools]
 package-dir = {"" = "src"}
-py-modules = ["server", "engine", "layers", "summarizer", "llm", "cache", "config", "facts"]
+py-modules = ["server", "engine", "layers", "summarizer", "llm", "cache", "config", "facts", "telemetry", "committee", "blind"]
 
 [tool.setuptools.data-files]
 "xiezhi_review" = ["src/rules.yaml", "src/platforms.yaml", "src/benchmarks.yaml", "src/prompts.md"]

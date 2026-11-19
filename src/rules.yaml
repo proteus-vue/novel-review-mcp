@@ -3,7 +3,7 @@
 #   1) 形态/结构判据优先于枚举黑名单（固定词表漏变得快，形态判据 0 误报）
 #   2) 可复现技术细节用结构识别（换路径名就能绕过命令黑名单）
 #   3) 词表扫不出叙述声音与逻辑断链，这两类必须进 L3 语义评审
-version: "0.3.0"
+version: "0.4.0"
 
 meta:
   name: xiezhi-review
@@ -228,6 +228,15 @@ strict_gate:
   red_team_veto: true        # 红队 blocking 或 verdict=reject → 该章不过，批次不放行
   benchmark_veto: true       # 对标 verdict=below → 该章不过，批次不放行
   mid_issues_min_for_gate: 1 # 高/致命 issue 数 ≥1 时触发复核标记
+
+# ---------------- P2b：双评审（最小版，仅红队+对标）----------------
+# 默认关闭：成本翻倍，需显式开启。同网关同模型只算多视角（independent=false），
+# 想获得真正独立投票必须配第二后端 NOVEL_REVIEW_LLM2_URL/KEY/MODEL。
+# 铁律：一票否决不可被多数票覆盖；分数取中位数；分歧禁止自动放行、升级人工。
+dual_review:
+  enabled: false
+  stages: [red_team, benchmark]
+  disagreement_gap: 10       # 归一到百分制后的分差阈值；语义冲突无条件算分歧
 
 # ---------------- 复审铁律（红队核心）----------------
 revision_policy:

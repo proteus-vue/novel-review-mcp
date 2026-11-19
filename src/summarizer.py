@@ -7,6 +7,7 @@ import re
 
 import cache
 import layers
+import telemetry
 from config import efficiency_cfg, get_benchmark_dimensions, render_prompt
 from llm import judge
 
@@ -42,7 +43,16 @@ async def summarize_one(chapter: dict) -> dict:
         return cached
     prompt = render_prompt("summary", text=text[:4000])
     async with _sem:
-        obj = await judge(prompt)
+        try:
+            obj = await judge(prompt)
+        except Exception as exc:
+            tel = telemetry.current()
+            if tel is not None:
+                tel.record_error("summary", str(exc))
+            raise
+    tel = telemetry.current()
+    if tel is not None:
+        tel.record_llm("summary", obj.get("_telemetry"))
     if obj.get("_stub") or obj.get("_parse_error") or obj.get("_backend") == "stub":
         result = _fallback_summary(chapter)
         result["_stub"] = True

@@ -8,6 +8,7 @@ from __future__ import annotations
 import json
 import os
 import re
+import time
 from typing import Protocol
 
 import asyncio
@@ -51,6 +52,10 @@ class StubGateway:
         }
         return json.dumps(payload, ensure_ascii=False)
 
+    async def chat_detailed(self, prompt: str) -> tuple[str, dict]:
+        raw = await self.chat(prompt)
+        return raw, {}
+
 
 class OpenAICompatGateway:
     """OpenAI 兼容 /chat/completions，用标准库 urllib，无额外依赖。"""
@@ -64,6 +69,10 @@ class OpenAICompatGateway:
         self.timeout = timeout
 
     async def chat(self, prompt: str) -> str:
+        raw, _ = await self.chat_detailed(prompt)
+        return raw
+
+    async def chat_detailed(self, prompt: str) -> tuple[str, dict]:
         import urllib.request
 
         body = json.dumps({
@@ -89,15 +98,24 @@ class OpenAICompatGateway:
                 return json.loads(resp.read().decode("utf-8"))
 
         data = await asyncio.to_thread(_do)
-        return data["choices"][0]["message"]["content"]
+        content = data["choices"][0]["message"]["content"]
+        usage = data.get("usage") if isinstance(data.get("usage"), dict) else {}
+        return content, usage
 
 
 _gateway: Gateway | None = None
+_secondary_gateway: Gateway | None = None
 
 
 def set_gateway(gw: Gateway) -> None:
     global _gateway
     _gateway = gw
+
+
+def set_secondary_gateway(gw: Gateway | None) -> None:
+    """注入第二评审员网关；传 None 表示不独立，复用主网关（多视角而非独立投票）。"""
+    global _secondary_gateway
+    _secondary_gateway = gw
 
 
 def get_gateway() -> Gateway:
@@ -111,6 +129,25 @@ def get_gateway() -> Gateway:
         else:
             _gateway = StubGateway()
     return _gateway
+
+
+def get_secondary_gateway() -> tuple[Gateway, bool]:
+    """返回 (第二评审员网关, 是否独立后端)。
+
+    独立后端优先用显式注入，其次用 NOVEL_REVIEW_LLM2_* 环境变量；
+    都没有则复用主网关——此时 independent=False，只算多视角，不冒充独立投票。
+    """
+    global _secondary_gateway
+    if _secondary_gateway is not None:
+        return _secondary_gateway, True
+    url = os.getenv("NOVEL_REVIEW_LLM2_URL", "").strip()
+    key = os.getenv("NOVEL_REVIEW_LLM2_KEY", "").strip()
+    model = os.getenv("NOVEL_REVIEW_LLM2_MODEL", "").strip()
+    if url and key:
+        if _secondary_gateway is None:
+            _secondary_gateway = OpenAICompatGateway(url, key, model or "gpt-4o-mini")
+        return _secondary_gateway, True
+    return get_gateway(), False
 
 
 def parse_json(raw: str) -> dict:
@@ -132,10 +169,27 @@ def parse_json(raw: str) -> dict:
         return {"_parse_error": str(exc), "raw": s[:200]}
 
 
-async def judge(prompt: str) -> dict:
-    gw = get_gateway()
-    raw = await gw.chat(prompt)
+async def _chat_with_usage(gw: Gateway, prompt: str) -> tuple[str, dict, bool]:
+    """优先走 chat_detailed 拿 usage；自定义网关只实现 chat 时也能用。"""
+    detailed = getattr(gw, "chat_detailed", None)
+    if callable(detailed):
+        raw, usage = await detailed(prompt)
+        return raw, (usage if isinstance(usage, dict) else {}), True
+    return await gw.chat(prompt), {}, False
+
+
+async def judge(prompt: str, gateway: Gateway | None = None) -> dict:
+    """单次评审调用；gateway 显式指定第二评审员，未指定走主网关。"""
+    gw = gateway or get_gateway()
+    t0 = time.perf_counter()
+    raw, usage, usage_available = await _chat_with_usage(gw, prompt)
+    latency = round(time.perf_counter() - t0, 4)
     obj = parse_json(raw)
     obj["_backend"] = gw.backend
     obj["_model"] = gw.model
+    obj["_telemetry"] = {
+        "latency_sec": latency,
+        "usage": usage,
+        "usage_available": usage_available,
+    }
     return obj

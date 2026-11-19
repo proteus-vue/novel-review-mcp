@@ -1,7 +1,7 @@
 # 多平台投稿档案（preset）
 # 数据来源：2026 年公开投稿/签约资料整理，仅供评审参考；实际以各平台官方最新公告为准。
 # 用法：platform_fit / review_batch 的 platform 参数取本文件的 key。
-version: "0.3.0"
+version: "0.4.0"
 
 defaults:
   must_avoid:

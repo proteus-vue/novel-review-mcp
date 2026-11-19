@@ -110,3 +110,8 @@ def rubric_cfg() -> dict:
 
 def revision_policy() -> dict:
     return RULES.get("revision_policy", {})
+
+
+def dual_review_cfg() -> dict:
+    """P2b 双评审配置：默认关闭；开启后只对配置中的 stage 做双路评审。"""
+    return RULES.get("dual_review", {})

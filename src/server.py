@@ -9,7 +9,9 @@ from __future__ import annotations
 import json
 import sys
 
+import blind
 import cache
+import committee
 import engine
 import facts
 import layers
@@ -152,6 +154,34 @@ async def cache_clear() -> dict:
 
 
 @mcp.tool()
+async def blind_review_package(chapters: list[dict], platform: str = "qimao",
+                               include_prompts: bool = True, persona: str = "",
+                               facts: dict | None = None) -> dict:
+    """P2c 盲评输入包：只含正文+提示词，显式剔除既有评审字段，供独立评审员产出 judgements。"""
+    return blind.build_blind_package(chapters, platform, include_prompts, persona, facts)
+
+
+@mcp.tool()
+async def blind_validate_judgements(chapters: list[dict], judgements: dict) -> dict:
+    """校验外部盲评 JSON 的结构与评分口径；不补分、不自动换算。"""
+    return blind.validate_judgements(chapters, judgements, strict=True)
+
+
+@mcp.tool()
+async def blind_review(chapters: list[dict], judgements: dict, platform: str = "qimao",
+                       facts: dict | None = None, persona: str = "",
+                       revised_ids: list[str] | None = None, clear_cache: bool = True) -> dict:
+    """P2c：用独立盲评 judgements 回注完整三审流水线，附校验与命中审计；前后清缓存防污染。"""
+    return await blind.blind_review(chapters, judgements, platform, facts, persona, revised_ids, clear_cache)
+
+
+@mcp.tool()
+async def blind_compare(original_report: dict, blind_report: dict) -> dict:
+    """事后对照原评审与盲评的分数/判定/否决差异；只呈现，不自动改写判定。"""
+    return blind.blind_compare(original_report, blind_report)
+
+
+@mcp.tool()
 async def list_profiles() -> dict:
     """列出可用平台档案、规则版本与提示词维度。"""
     return {
@@ -163,7 +193,7 @@ async def list_profiles() -> dict:
 
 
 def selfcheck() -> dict:
-    """本地自检：规则可加载、红线能命中、短路生效、结构完整、P0信号非桩。"""
+    """本地自检：规则/红线/短路/结构完整，含 P0 信号、P2c 盲评工具与判定口径。"""
     checks = {}
     checks["rules_version"] = RULE_VERSION
     checks["platforms"] = len(PLATFORMS.get("platforms", {}))
@@ -199,6 +229,36 @@ def selfcheck() -> dict:
             "overall": {"verdict": "修改后发布", "vetoes": []}}}},
         chapter_id="C", persona="克制、算账")
     checks["brief_reflows_review"] = bool(brief["must_avoid"]) and "写作约束" in brief["prompt"]
+    # P2c 盲评回归自检
+    package = blind.build_blind_package([{"id": "X", "text": "正文", "score": 99}])
+    checks["blind_package_filters_leak"] = (
+        not package["isolation"]["safe"] and "score" not in package["chapters"][0]
+    )
+    validation = blind.validate_judgements([{"id": "X", "text": "正文"}], {"X": {}}, strict=True)
+    checks["blind_validation_catches_missing"] = not validation["valid"]
+    comparison = blind.blind_compare(
+        {"chapters": {"X": {"overall": {"score": 80, "verdict": "放行", "vetoes": []}}}},
+        {"chapters": {"X": {"overall": {"score": 70, "verdict": "禁止发布", "vetoes": ["红队否决"]}}}},
+    )
+    checks["blind_compare_detects_flip"] = bool(
+        comparison["rows"] and comparison["rows"][0]["verdict_flip"]
+    )
+    # P2b 双评审自检（合并逻辑，默认关闭不改判定口径）
+    veto = committee.merge_pair(
+        "red_team",
+        {"score": 95, "verdict": "accept", "blocking": False},
+        {"score": 92, "verdict": "reject", "blocking": True},
+        {"disagreement_gap": 10},
+    )
+    checks["committee_veto_not_overridden"] = (
+        veto["merged"]["blocking"] and veto["merged"]["verdict"] == "reject"
+    )
+    split = committee.merge_pair(
+        "benchmark", {"total": 8.8, "verdict": "near"},
+        {"total": 6.0, "verdict": "below"}, {"disagreement_gap": 10})
+    checks["committee_disagreement_detected"] = (
+        split["disagreement"] and split["merged"]["verdict"] == "below"
+    )
     return checks
 
 

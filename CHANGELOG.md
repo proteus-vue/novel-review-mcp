@@ -7,7 +7,25 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.4.0] - 2026-11-19
+
 ### Added
+- P2b 双评审（默认关闭，显式开启；不改默认判定口径）：
+  - `committee.py`：两路评审合并纯函数——分数取中位数、判定语义冲突或分差超阈值记为分歧、红队 blocking / 对标 below 一票否决不可被多数票覆盖。
+  - 仅红队 + 对标走双路，其余阶段单评审以控成本；`overall.committee` 记录是否一致、是否独立后端、分歧原因；单章与批次有分歧时禁止自动放行，标"双评审分歧待人工复核"。
+  - 第二评审员用 `NOVEL_REVIEW_LLM2_URL/KEY/MODEL` 或 `llm.set_secondary_gateway()` 配置；同网关复用时明确标注 `independent=false`（多视角≠独立投票）。
+  - `test_p2b_dual.py` 15 项验证，含默认关闭零影响、开启调用数 5→7、一票否决优先级、批次分歧阻断。
+- P2c 盲评回归（把"独立评审"固化成工具，不改判定口径）：
+  - `blind_review_package`：生成只含正文 + 提示词的隔离输入包，显式剔除既有 score/verdict/veto 等字段并报告隔离状态。
+  - `blind_validate_judgements`：校验外部 judgements 的 stage 覆盖与结构；发现 0–10 分错配只告警不自动换算，避免重演口径漂移。
+  - `blind_review`：用外部 judgements 回注完整三审流水线，附校验与命中审计；查找不到章节时明确报错，不静默套用；运行前后清缓存并恢复网关，防止污染普通评审。
+  - `blind_compare`：事后对照分数差、判定翻转、否决增减，只呈现差异不自动改写报告。
+  - 工具 21→25；`server --selfcheck` 加三项盲评自检；新增 `test_p2c_blind.py` 14 项验证。
+- P2a 真实计时 / 成本账本（不改评分与闸门口径）：
+  - `review_chapter` / `review_batch` 新增 `timing` 与 `telemetry`：`wall_sec`、逐阶段墙钟、`llm_calls_actual`、`llm_cumulative_sec`、`llm_queue_sec`、按 stage 的调用/耗时/token 拆分。
+  - `llm.judge` 采集真实调用 latency 与网关 usage；OpenAI 兼容端点返回 `usage` 时自动入账，自定义旧网关只实现 `chat` 时也能用，缺 usage 不伪造 token。
+  - `efficiency.llm_calls_estimate` 保留兼容，`llm_calls_actual` / `tokens` / `efficiency.llm_queue_sec` 为新增事实字段；L1 硬拒短路如实记 0 次调用。
+  - 新增 `test_p2_telemetry.py` 12 项验证，含增量复用后 actual 调用数真实下降、桩模式判定不变。
 - P1 闭环能力（评审从体检变写稿护栏，全部零 LLM）：
   - `extract_facts`：从正文抽硬数据，生成结构化 `value_set` 候选契约（单位+允许数值，中文/阿拉伯数字通吃）；跨章同单位多值标 suspect。`layers.fact_check` 支持 value_set 校验。修复 P0 遗留的中文数字转换分支顺序 bug（"三百二十"曾得 0）。
   - 伏笔台账：`foreshadow_register/close/list/overdue` 五个工具，去重登记、文本匹配回收、超期提醒；落盘到缓存根（wheel 只读安全），无章序信息不臆断超期。
@@ -24,6 +42,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ### Changed
 - 品牌命名：中文名定为「獬豸」（Xiezhi），取神兽明辨是非、触退无理者之意，对应三审/红队/闸门一票否决；包名与 MCP Server 标识改为 `xiezhi-review`，旧 `novel-review-mcp` 控制台命令保留兼容。
 - 修复 wheel 安装：配置文件改为同时支持源码目录与 `<prefix>/xiezhi_review/`，缓存从只读 site-packages 迁到用户目录（`XIEZHI_CACHE_DIR` 可覆盖）；`pip install .` 后控制台命令可直接运行。
+- 修复 wheel 打包清单：`py-modules` 补齐 `telemetry` / `committee` / `blind`，避免安装后 import 失败。
+- 版本号统一升到 0.4.0（rules / platforms / benchmarks / pyproject）；README clone 地址与项目 URL 指向 `github.com/proteus-vue/novel-review-mcp`。
 - README 补 Windows / macOS / Linux 安装与 MCP 客户端配置差异。
 
 ## [0.3.0] - 2026-11-19
