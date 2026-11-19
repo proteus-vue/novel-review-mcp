@@ -5,6 +5,11 @@ All notable changes to this project are documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [Unreleased]
+
+### Changed
+- 品牌命名：中文名定为「獬豸」（Xiezhi），取神兽明辨是非、触退无理者之意，对应三审/红队/闸门一票否决；包名与 MCP Server 标识改为 `xiezhi-review`，旧 `novel-review-mcp` 控制台命令保留兼容。
+
 ## [0.3.0] - 2026-11-19
 
 ### Added

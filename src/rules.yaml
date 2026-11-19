@@ -1,4 +1,4 @@
-# 小说评审规则库 —— 三审 + 红队 + 反漂移
+# 獬豸（Xiezhi）· 小说评审规则库 —— 三审 + 红队 + 反漂移
 # 设计原则：
 #   1) 形态/结构判据优先于枚举黑名单（固定词表漏变得快，形态判据 0 误报）
 #   2) 可复现技术细节用结构识别（换路径名就能绕过命令黑名单）
@@ -6,7 +6,7 @@
 version: "0.3.0"
 
 meta:
-  name: novel-review
+  name: xiezhi-review
   stages: [first_review, second_review, third_review, red_team, benchmark, anti_drift]
 
 # ---------------- 三审流水线（对齐七猫初审/复审/终审的三道闸门）----------------

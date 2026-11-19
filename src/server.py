@@ -1,4 +1,4 @@
-"""小说评审加速 MCP Server —— 三审 + 红队 + 对标头部 + 反漂移 + 增量高效。
+"""獬豸（Xiezhi）· 小说评审加速 MCP Server —— 三审 + 红队 + 对标头部 + 反漂移 + 增量高效。
 
 运行:  python server.py            (stdio，供写稿 Agent 挂载)
 自测:  python server.py --selfcheck
@@ -19,7 +19,7 @@ try:
 except ImportError:  # mcp 2.x
     from mcp.server.mcpserver import MCPServer as _Server
 
-mcp = _Server("novel-review")
+mcp = _Server("xiezhi-review")
 
 
 @mcp.tool()
