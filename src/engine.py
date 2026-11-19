@@ -47,6 +47,11 @@ async def review_chapter(
         "platform": profile.get("name", plat_key),
         "stages": {},
         "hard_reject_short_circuit": False,
+        # 机器层弱信号：零成本、确定性，供 L3/人工复核，不直接参与一票否决
+        "machine_signals": {
+            "self_consistency": layers.self_consistency_check(text),
+            "pacing": layers.pacing_signals(text),
+        },
     }
 
     # ---- 一审：L1 形态红线 + L2 打分（前置短路，毫秒级）----
@@ -319,10 +324,49 @@ async def check_consistency(chapters: list[dict], facts: dict | None = None) -> 
 
 
 async def check_pacing(chapters: list[dict]) -> dict:
+    """节奏检查：机器层信号为主（零成本），LLM 只做跨章节奏探针。
+
+    payoff_gap/conflict_density 由 layers.pacing_signals 真实计算，不再是桩。
+    """
+    per_chapter = []
+    for c in chapters:
+        sig = layers.pacing_signals(c.get("text", ""))
+        sig["chapter_id"] = c.get("id", "")
+        per_chapter.append(sig)
     summaries = await summarizer.summarize_many(chapters)
     key = "pacing_probe" if "pacing_probe" in PROMPTS else "anti_drift"
     llm = await _llm_stage(key, summary=summarizer.compact(summaries), facts="", persona="")
-    return {"payoff_gap": 0, "conflict_density": 0, "summaries": [s.get("chapter_id") for s in summaries], "llm": llm}
+
+    # 节奏荒漠检测：连续 N 章爽点密度低于阈值
+    warn = RULES.get("pacing_signals", {}).get("payoff_per_2000_warn", 0.5)
+    dry_n = RULES.get("pacing_signals", {}).get("dry_spell_chapters", 2)
+    gaps, run = [], []
+    for s in per_chapter:
+        # 短文本（<2千字）密度外推会失真：1个爽点/156字 = 12.8/2千字。
+        # 对短章用原始计数判定，避免把正常章误标/漏标。
+        chars = s.get("chars", 0)
+        if chars < 2000:
+            low = s.get("payoff", {}).get("count", 0) == 0
+        else:
+            low = s.get("payoff", {}).get("per_2000", 0) < warn
+        if low:
+            run.append(s.get("chapter_id"))
+        else:
+            if len(run) >= dry_n:
+                gaps.append(run[:])
+            run = []
+    if len(run) >= dry_n:
+        gaps.append(run[:])
+
+    densities = [s.get("conflict", {}).get("per_1000", 0) for s in per_chapter]
+    return {
+        "per_chapter": per_chapter,
+        "payoff_gap": gaps,                                   # 真实：节奏荒漠章段
+        "conflict_density": round(sum(densities) / len(densities), 2) if densities else 0,
+        "summaries": [s.get("chapter_id") for s in summaries],
+        "llm": llm,
+        "note": "机器层信号为零成本确定性计算；LLM 输出仅作跨章节奏参考。",
+    }
 
 
 async def platform_fit(text: str, platform: str = "qimao") -> dict:

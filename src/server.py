@@ -11,6 +11,7 @@ import sys
 
 import cache
 import engine
+import layers
 from config import RULE_VERSION, PLATFORMS, BENCHMARKS, PROMPTS
 
 # 兼容 mcp 1.x (FastMCP) 与 2.x (MCPServer)
@@ -85,6 +86,19 @@ async def impact_plan(chapters: list[dict], revised_ids: list[str] | None = None
 
 
 @mcp.tool()
+async def check_self_consistency(text: str) -> dict:
+    """单章内部自洽弱信号：时序倒退/数字互斥/称谓变体。零成本，只报 suspect 与原文证据，不判 fatal。"""
+    return {"suspects": layers.self_consistency_check(text),
+            "note": "确定性弱信号，需 L3 或人工复核；不单独构成否决。"}
+
+
+@mcp.tool()
+async def check_pacing(chapters: list[dict]) -> dict:
+    """节奏检查：爽点/冲突/钩子密度 + 节奏荒漠检测。机器层为主，LLM 仅跨章探针。"""
+    return await engine.check_pacing(chapters)
+
+
+@mcp.tool()
 async def cache_stats() -> dict:
     """缓存命中统计与清空能力（clear=false 只看）。"""
     return {"stats": dict(cache.stats), "rule_version": RULE_VERSION}
@@ -108,8 +122,7 @@ async def list_profiles() -> dict:
 
 
 def selfcheck() -> dict:
-    """本地自检：规则可加载、红线能命中、短路生效、结构完整。"""
-    import layers
+    """本地自检：规则可加载、红线能命中、短路生效、结构完整、P0信号非桩。"""
     checks = {}
     checks["rules_version"] = RULE_VERSION
     checks["platforms"] = len(PLATFORMS.get("platforms", {}))
@@ -121,6 +134,14 @@ def selfcheck() -> dict:
     leak = "正文里写着【本章标注】新埋伏笔：F17"
     checks["l1_catches_internal_leak"] = any(h["type"] == "internal_marker_leak" for h in layers.l1_check(leak))
     checks["unknown_platform_no_crash"] = bool(engine.get_platform("nonexistent")[0])
+    # P0 新能力自检
+    seq = "第7天他签下订单。第3天他又来到这里。"
+    checks["self_consistency_catches_time_backward"] = any(
+        s["type"] == "time_backward" for s in layers.self_consistency_check(seq))
+    checks["foreshadow_without_F_id"] = bool(layers.extract_foreshadow("他不知道的是，箱子还没打开。"))
+    sig = layers.pacing_signals("他成交了。对手反击。谁料还有后手？")
+    checks["pacing_not_stub"] = sig.get("payoff", {}).get("count", 0) > 0 and \
+        sig.get("conflict", {}).get("count", 0) > 0
     return checks
 
 

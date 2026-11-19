@@ -8,6 +8,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ## [Unreleased]
 
 ### Added
+- P0 机器层能力（AI 写小说场景）：
+  - `check_self_consistency`：单章内部自洽弱信号，检测时序倒退、数字互斥、称谓变体；只报 suspect + 原文证据，不伪造 fatal/reject。原型来自独立评审实测的四类真问题。
+  - `check_pacing` 去桩：爽点/冲突/钩子密度为确定性计算，含节奏荒漠检测；短章用原始计数避免密度外推失真。
+  - 伏笔抽取通用化：`_fallback_summary` 去掉 F# 编号假设，用悬念句/未完成事件识别，无编号也能抽。
+  - 单章报告新增 `machine_signals` 字段，`server.selfcheck` 增加三项 P0 自检。
 - 跨语言扩展点：`XIEZHI_CONFIG_DIR` 指向外部配置目录，可整包替换规则/平台/对标/提示词（语言包），不改代码；缓存随语言包落盘。
 - CI 矩阵：Ubuntu / macOS / Windows × Python 3.10 / 3.12，覆盖源码自检、关键路径测试、demo 与 wheel 安装后控制台命令。
 

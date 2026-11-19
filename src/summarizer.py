@@ -6,6 +6,7 @@ import json
 import re
 
 import cache
+import layers
 from config import efficiency_cfg, get_benchmark_dimensions, render_prompt
 from llm import judge
 
@@ -22,7 +23,7 @@ def _fallback_summary(chapter: dict) -> dict:
         "conflicts": [],
         "payoffs": [],
         "hook": text[-80:],
-        "new_foreshadow": re.findall(r"F\d{1,3}", text)[:8],
+        "new_foreshadow": layers.extract_foreshadow(text),
         "closed_foreshadow": [],
         "hard_data": {"time": "", "numbers": re.findall(r"\d+(?:\.\d+)?", text)[:12]},
         "persona_state": "",

@@ -91,7 +91,7 @@ python server.py               # stdio 模式，供写稿 Agent 挂载
 
 在客户端配置 stdio MCP server 时，command 指向 `python`，args 为 `[/绝对路径/src/server.py]`，cwd 设为 `src/`。Windows 下 command 用 `python.exe` 绝对路径，args 形如 `["C:\\...\\novel-review-mcp\\src\\server.py"]`；若已 `pip install .`，也可直接用 `xiezhi-review` 命令，无需 cwd。环境变量用 `set`（CMD）或 `$env:NAME = "值"`（PowerShell）设置。
 
-## MCP 工具（13 个）
+## MCP 工具（15 个）
 
 | 工具 | 作用 |
 |---|---|
@@ -99,6 +99,8 @@ python server.py               # stdio 模式，供写稿 Agent 挂载
 | `review_chapter` | 单章三审：一审合规定位（硬拒短路）→二审质量→三审终审→红队→对标 |
 | `review_batch` | 批次评审：影响半径增量 + 摘要金字塔反漂移 + 复审铁律 |
 | `check_consistency` | 跨章一致性：事实契约硬校验 + 摘要层 LLM 冲突发现 |
+| `check_self_consistency` | **单章内部自洽**：时序倒退 / 数字互斥 / 称谓变体，零成本弱信号，只报 suspect + 原文证据 |
+| `check_pacing` | **节奏检查**：爽点/冲突/钩子密度 + 节奏荒漠检测，机器层为主、LLM 仅跨章探针 |
 | `red_team` | 红队挑刺：逻辑漏洞/动机断裂/硬巧合/读者弃书点 |
 | `benchmark` | 按结构密度 8 维对标头部，输出 gap |
 | `platform_fit` | 平台收稿偏好适配度评分 |
@@ -131,21 +133,23 @@ python server.py               # stdio 模式，供写稿 Agent 挂载
 {"rules": [{"name": "规则名", "must_not": ["正则1", "正则2"]}]}
 ```
 
-引擎做确定性正则校验。**注意边界**：契约只检查跨章"契约"，不检查单章内部自洽；内部逻辑矛盾（如时序倒错、数字自转不拢）只能靠 L3 语义层发现。
+引擎做确定性正则校验。
+
+**单章内部自洽**（P0 新增）：`check_self_consistency` 提供确定性弱信号——时序倒退、数字互斥、称谓变体，只报 `suspect` + 原文证据。**注意边界**：这是弱信号，不判 fatal/reject，最终仍需 L3 语义层或人工复核；`facts` 契约仍只管跨章硬数据。
 
 ## 项目结构
 
 ```
 novel-review-mcp/
 ├── src/
-│   ├── server.py        # MCP 入口，13 个工具 + selfcheck
+│   ├── server.py        # MCP 入口，15 个工具 + selfcheck
 │   ├── engine.py        # 三审流水线 / 聚合判定 / 影响半径
-│   ├── layers.py        # L1 形态红线 + L2 关键词打分
-│   ├── summarizer.py    # 摘要金字塔
+│   ├── layers.py        # L1 红线 + L2 打分 + P0 机器层信号（自洽/节奏/伏笔）
+│   ├── summarizer.py    # 摘要金字塔（伏笔通用抽取）
 │   ├── llm.py           # 可插拔 LLM 网关
 │   ├── cache.py         # hash 增量缓存
 │   ├── config.py        # 配置加载（路径相对本文件，不依赖 cwd）
-│   ├── demo.py / test_pipeline.py
+│   ├── demo.py / test_pipeline.py / test_p0_signals.py
 │   └── *.yaml / prompts.md / requirements.txt
 ├── LICENSE / CHANGELOG.md / CONTRIBUTING.md
 ```
